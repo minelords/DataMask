@@ -1,0 +1,136 @@
+package main
+
+import (
+	"fmt"
+	"log"
+	"os"
+	"strings"
+
+	dlp "github.com/bytedance/godlp"
+	dlpheader "github.com/bytedance/godlp/dlpheader"
+)
+
+type DLPHandler struct {
+	engine dlpheader.EngineAPI
+}
+
+// 初始化脱敏处理器
+func NewDLPHandler(caller string) (*DLPHandler, error) {
+	eng, err := dlp.NewEngine(caller)
+	if err != nil {
+		return nil, fmt.Errorf("初始化失败: %v", err)
+	}
+	
+	// 加载默认配置
+	if err := eng.ApplyConfigDefault(); err != nil {
+		return nil, fmt.Errorf("加载配置失败: %v", err)
+	}
+	
+	return &DLPHandler{engine: eng}, nil
+}
+
+// 注册自定义脱敏规则
+func (h *DLPHandler) RegisterCustomRules() {
+	// 邮箱保留域名全称
+	h.engine.RegisterMasker("KeepDomain", func(email string) (string, error) {
+		parts := strings.Split(email, "@")
+		if len(parts) != 2 {
+			return email, fmt.Errorf("invalid email format")
+		}
+		return fmt.Sprintf("***%s@%s", parts[0][len(parts[0])-1:], parts[1]), nil
+	})
+}
+
+// 处理文本内容
+func (h *DLPHandler) ProcessText(content string) (string, error) {
+	// 先检测敏感信息
+	results, err := h.engine.Detect(content)
+	if err != nil {
+		return "", fmt.Errorf("检测失败: %v", err)
+	}
+	log.Printf("检测到%d条敏感信息", len(results))
+
+	// 执行脱敏处理
+	masked, _, err := h.engine.Deidentify(content)
+	if err != nil {
+		return "", fmt.Errorf("脱敏失败: %v", err)
+	}
+	return masked, nil
+}
+
+// 处理文本文件
+func (h *DLPHandler) ProcessFile(inputPath, outputPath string) error {
+	// 读取文件内容
+	content, err := os.ReadFile(inputPath)
+	if err != nil {
+		return fmt.Errorf("文件读取失败: %v", err)
+	}
+
+	// 处理内容
+	masked, err := h.ProcessText(string(content))
+	if err != nil {
+		return err
+	}
+
+	// 写入处理结果
+	if err := os.WriteFile(outputPath, []byte(masked), 0644); err != nil {
+		return fmt.Errorf("文件写入失败: %v", err)
+	}
+	return nil
+}
+
+// 处理结构化数据
+type UserData struct {
+	Name    string `mask:"KEEP"`       // 保留原始值
+	Email   string `mask:"KeepDomain"` // 使用自定义规则
+	Phone   string `mask:"CHINAPHONE"`
+	Address string `mask:"ADDRESS"`
+}
+
+func main() {
+	// 初始化处理器
+	handler, err := NewDLPHandler("data.processor.v1")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer handler.engine.Close()
+
+	// 注册自定义规则
+	handler.RegisterCustomRules()
+
+	// 示例1：处理字符串
+	sampleText := `用户信息：
+姓名：张三
+电话：13800138000
+邮箱：zhangsan@company.com
+地址：北京市朝阳区建国路100号`
+	maskedText, err := handler.ProcessText(sampleText)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println("脱敏后的文本：\n", maskedText)
+
+	// 示例2：处理文件
+	if len(os.Args) > 2 {
+		inputFile := os.Args[1]
+		outputFile := os.Args[2]
+		if err := handler.ProcessFile(inputFile, outputFile); err != nil {
+			log.Fatal(err)
+		}
+		fmt.Printf("文件处理完成：%s -> %s\n", inputFile, outputFile)
+	}
+
+	// 示例3：处理结构体
+	user := &UserData{
+		Name:    "李四",
+		Email:   "lisi@example.org",
+		Phone:   "13912345678",
+		Address: "上海市浦东新区陆家嘴环路1288号",
+	}
+	
+	if _, err := handler.engine.MaskStruct(user); err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("\n脱敏后的用户数据：\n姓名：%s\n邮箱：%s\n电话：%s\n地址：%s\n",
+		user.Name, user.Email, user.Phone, user.Address)
+}
