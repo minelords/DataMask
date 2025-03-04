@@ -8,7 +8,7 @@ Ubuntu 20+
 >先决条件：
 python版本`3.10`及以上，Ubuntu能`科学上网`
 
-1.运行`start.sh ` 
+1.运行`start.sh `   
 2.等待安装完docker镜像和go必要环境   
 3.登陆`localhost:8000`进行配置，启动实例，获得API_KEY   
 4.修改`webui.py`里的`FACE_API_KEY`   
